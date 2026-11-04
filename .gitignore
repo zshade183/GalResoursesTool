@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+coverage/
+.pnpm-store/
+.pnpm-cache/
+*.log
+data/
+release/
+*.tsbuildinfo
+

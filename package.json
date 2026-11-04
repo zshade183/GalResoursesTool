@@ -1,0 +1,19 @@
+{
+  "name": "gal-resources-tool",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "package:portable": "node scripts/package-portable.mjs",
+    "start": "node apps/api/dist/server.js",
+    "dev": "pnpm --parallel --filter @gal/web --filter @gal/api --filter @gal/worker dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
+
