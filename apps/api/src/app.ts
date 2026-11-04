@@ -4,10 +4,16 @@ import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { memoryProjects, type ProjectRepository } from "./projects.js";
+import { referenceRoutes } from "./references.js";
 
 export function buildApp(projects: ProjectRepository = memoryProjects()) {
   const app = Fastify({ logger: true });
+  referenceRoutes(app, projects);
   const characterInput = z.object({ name: z.string().trim().min(1).max(120), description: z.string().max(20000) }).strict();
+  app.get<{ Params: { id: string; characterId: string } }>("/v1/projects/:id/characters/:characterId/history", async (request, reply) => {
+    if (!(await projects.characters(request.params.id)).some(c => c.id === request.params.characterId)) return reply.code(404).send({ message: "角色不存在" });
+    return { items: await projects.history(request.params.id, request.params.characterId) };
+  });
   app.get<{ Params: { id: string } }>("/v1/projects/:id/characters", async (request, reply) => {
     if (!await projects.get(request.params.id)) return reply.code(404).send({ message: "作品不存在" });
     return { items: await projects.characters(request.params.id) };

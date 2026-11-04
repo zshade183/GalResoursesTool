@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { References } from "./References";
 type Character = { id: string; name: string; description: string };
 export function Characters({ projectId }: { projectId: string }) {
   const [items, setItems] = useState<Character[]>([]);
@@ -8,6 +9,8 @@ export function Characters({ projectId }: { projectId: string }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [history, setHistory] = useState<(Character & { version_id: string; updated_at: string })[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const url = `${import.meta.env.VITE_API_BASE_URL ?? ""}/v1/projects/${projectId}/characters`;
   useEffect(() => {
     const controller = new AbortController();
@@ -17,7 +20,19 @@ export function Characters({ projectId }: { projectId: string }) {
     }).catch(e => { if (!controller.signal.aborted) setError(String(e)); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [url]);
-  function reset() { setEditing(undefined); setName(""); setDescription(""); }
+  useEffect(() => {
+    setHistory([]);
+    if (!editing) return;
+    const controller = new AbortController();
+    setHistoryLoading(true);
+    fetch(`${url}/${editing}/history`, { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error("历史加载失败");
+      const data = await response.json();
+      if (!controller.signal.aborted) setHistory(data.items);
+    }).catch(error => { if (!controller.signal.aborted) setError(String(error)); }).finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
+    return () => controller.abort();
+  }, [editing, url]);
+  function reset() { setEditing(undefined); setName(""); setDescription(""); setHistory([]); }
   return <section><h2>角色档案</h2>
     {loading ? <p>加载中…</p> : <div className="grid">{items.map(item => <button className="card character-card" disabled={busy} key={item.id} onClick={() => { setEditing(item.id); setName(item.name); setDescription(item.description); }}><h3>{item.name}</h3><p>{item.description.slice(0, 100) || "尚未填写设定"}</p><span>编辑设定</span></button>)}</div>}
     {!loading && !items.length && <p>还没有角色，先添加主角的名字和设定。</p>}
@@ -36,5 +51,7 @@ export function Characters({ projectId }: { projectId: string }) {
       <button disabled={busy || !name.trim()}>{busy ? "保存中…" : "保存角色"}</button> {editing && <button type="button" disabled={busy} onClick={reset}>取消编辑</button>}
       {error && <p role="alert">{error}</p>}
     </form>
+    {editing && <section aria-label="设定历史"><h3>版本历史</h3><p>选择旧版将填入编辑区，点击“保存角色”后恢复为新版本，原有记录仍保留。</p>{historyLoading ? <p>加载中…</p> : history.map(version => <details className="card" key={version.version_id}><summary>{version.name} · {new Date(version.updated_at).toLocaleString("zh-CN")}</summary><p style={{ whiteSpace: "pre-wrap" }}>{version.description || "空设定"}</p><button disabled={busy} onClick={() => { setName(version.name); setDescription(version.description); }}>将此版本填入编辑区</button></details>)}</section>}
+    {editing && <References key={editing} projectId={projectId} characterId={editing} />}
   </section>;
 }
