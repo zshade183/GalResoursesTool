@@ -9,11 +9,10 @@
     "dev": "pnpm --parallel --filter @gal/web --filter @gal/api --filter @gal/worker dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "test": "node apps/api/node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
   }
 }
-

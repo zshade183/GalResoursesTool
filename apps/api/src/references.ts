@@ -2,11 +2,37 @@ import type { FastifyInstance } from "fastify";
 import type { ProjectRepository } from "./projects.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { zipFiles } from "./zip.js";
 
 type Params = { id: string; characterId: string };
 export function referenceRoutes(app: FastifyInstance, repository: ProjectRepository) {
   const url = "/v1/projects/:id/characters/:characterId/references";
   const exists = async (params: Params) => (await repository.characters(params.id)).some(c => c.id === params.characterId);
+  app.post<{ Params: Params }>(url + "/export", async (request, reply) => {
+    const parsed = z.object({ ids: z.array(z.string()).min(1).max(100) }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ message: "请选择 1 至 100 张图片" });
+    if (!await exists(request.params)) return reply.code(404).send({ message: "角色不存在" });
+    const images = await repository.references(request.params.id, request.params.characterId);
+    const selected = [...new Set(parsed.data.ids)].map(id => images.find(image => image.id === id));
+    if (selected.some(image => !image)) return reply.code(400).send({ message: "部分图片已不可用" });
+    const files: { name: string; data: Buffer }[] = [];
+    const manifest: unknown[] = [];
+    let total = 0;
+    for (const image of selected) {
+      if (!image) continue;
+      if (app.hasDecorator("assetLicense") && app.getDecorator<(project: string, asset: string) => { redistribution?: string } | undefined>("assetLicense")(request.params.id, image.id)?.redistribution === "no") return reply.code(409).send({ message: "所选素材禁止原文件分发，请在资源库核对授权" });
+      const match = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(image.data_url);
+      if (!match) return reply.code(400).send({ message: "存在无法导出的图片" });
+      const data = Buffer.from(match[2]!, "base64");
+      total += data.length;
+      if (total > 100 * 1024 * 1024) return reply.code(413).send({ message: "请分批导出，每包不超过 100MB" });
+      const path = "images/" + files.length.toString().padStart(3, "0") + "." + match[1];
+      files.push({ name: path, data });
+      manifest.push({ id: image.id, name: image.name, path, source: image.source, created_at: image.created_at });
+    }
+    files.push({ name: "manifest.json", data: Buffer.from(JSON.stringify({ project_id: request.params.id, character_id: request.params.characterId, exported_at: new Date().toISOString(), images: manifest }, null, 2)) });
+    return reply.header("Content-Disposition", 'attachment; filename="character-images.zip"').type("application/zip").send(zipFiles(files));
+  });
   app.get<{ Params: Params }>(url, async (request, reply) => {
     if (!await exists(request.params)) return reply.code(404).send({ message: "角色不存在" });
     return { items: await repository.references(request.params.id, request.params.characterId), standard_id: await repository.standardReference(request.params.id, request.params.characterId) };

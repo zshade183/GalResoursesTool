@@ -4,9 +4,11 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export type Project = { id: string; name: string; created_at: string };
-export type Character = { id: string; project_id: string; name: string; description: string; updated_at: string };
+export type Character = { id: string; project_id: string; name: string; description: string; kind?: "character" | "scene" | "image"; updated_at: string };
 export type ReferenceImage = { id: string; project_id: string; character_id: string; name: string; data_url: string; source: string; created_at: string };
 export interface ProjectRepository {
+  music(projectId: string): Promise<Music[]>;
+  addMusic(music: Music): Promise<void>;
   references(projectId: string, characterId: string): Promise<ReferenceImage[]>;
   addReference(image: ReferenceImage): Promise<void>;
   standardReference(projectId: string, characterId: string, imageId?: string): Promise<string | undefined>;
@@ -17,6 +19,7 @@ export interface ProjectRepository {
   get(id: string): Promise<Project | undefined>;
   create(project: Project): Promise<Project>;
 }
+export type Music = { parent_id?: string; loop_start?: number; loop_end?: number; loop_verified?: boolean; id: string; project_id: string; name: string; purpose: string; source: string; mime: string; data: string; created_at: string };
 
 export function databaseProjects(filename: string) {
   if (filename !== ":memory:") mkdirSync(dirname(filename), { recursive: true });
@@ -32,6 +35,7 @@ export function databaseProjects(filename: string) {
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, character_id TEXT NOT NULL,
         name TEXT NOT NULL, data_url TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS music_assets (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS standard_references (
         project_id TEXT NOT NULL, character_id TEXT NOT NULL, image_id TEXT NOT NULL,
         PRIMARY KEY(project_id, character_id)
@@ -48,9 +52,18 @@ export function databaseProjects(filename: string) {
       INSERT INTO character_history (version_id,id,project_id,name,description,updated_at)
         SELECT lower(hex(randomblob(16))),id,project_id,name,description,updated_at FROM characters c
         WHERE NOT EXISTS (SELECT 1 FROM character_history h WHERE h.id=c.id);`);
+      for (const table of ["characters", "character_history"]) {
+        if (!db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === "kind")) db.exec(`ALTER TABLE ${table} ADD COLUMN kind TEXT NOT NULL DEFAULT 'character'`);
+      }
     },
     async history(projectId: string, characterId: string) {
-      return db.prepare("SELECT version_id,id,project_id,name,description,updated_at FROM character_history WHERE project_id=? AND id=? ORDER BY sequence DESC").all(projectId, characterId) as (Character & { version_id: string })[];
+      return db.prepare("SELECT version_id,id,project_id,name,description,updated_at,kind FROM character_history WHERE project_id=? AND id=? ORDER BY sequence DESC").all(projectId, characterId) as (Character & { version_id: string })[];
+    },
+    async music(projectId: string) {
+      return db.prepare("SELECT payload FROM music_assets WHERE project_id=? ORDER BY rowid DESC").all(projectId).map(row => JSON.parse(String(row.payload)) as Music);
+    },
+    async addMusic(music: Music) {
+      db.prepare("INSERT INTO music_assets VALUES (?,?,?)").run(music.id, music.project_id, JSON.stringify(music));
     },
     async references(projectId: string, characterId: string) {
       return db.prepare("SELECT * FROM reference_images WHERE project_id=? AND character_id=? ORDER BY created_at DESC,id").all(projectId, characterId) as ReferenceImage[];
@@ -68,11 +81,11 @@ export function databaseProjects(filename: string) {
     async saveCharacter(character: Character) {
       db.exec("BEGIN IMMEDIATE");
       try {
-      db.prepare(`INSERT INTO characters (id, project_id, name, description, updated_at) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, updated_at=excluded.updated_at WHERE characters.project_id=excluded.project_id`)
-        .run(character.id, character.project_id, character.name, character.description, character.updated_at);
-      db.prepare("INSERT INTO character_history (version_id,id,project_id,name,description,updated_at) VALUES (?,?,?,?,?,?)")
-        .run(randomUUID(), character.id, character.project_id, character.name, character.description, character.updated_at);
+      db.prepare(`INSERT INTO characters (id, project_id, name, description, updated_at, kind) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, updated_at=excluded.updated_at, kind=excluded.kind WHERE characters.project_id=excluded.project_id`)
+        .run(character.id, character.project_id, character.name, character.description, character.updated_at, character.kind ?? "character");
+      db.prepare("INSERT INTO character_history (version_id,id,project_id,name,description,updated_at,kind) VALUES (?,?,?,?,?,?,?)")
+        .run(randomUUID(), character.id, character.project_id, character.name, character.description, character.updated_at, character.kind ?? "character");
       db.exec("COMMIT");
       } catch (error) { db.exec("ROLLBACK"); throw error; }
       return character;
@@ -93,11 +106,14 @@ export function databaseProjects(filename: string) {
 
 export function memoryProjects(): ProjectRepository {
   const rows = new Map<string, Project>();
+  const music: Music[] = [];
   const characters = new Map<string, Character>();
   const history: (Character & { version_id: string })[] = [];
   const references: ReferenceImage[] = [];
   const standards = new Map<string, string>();
   return {
+    async music(projectId) { return music.filter(item => item.project_id === projectId).slice().reverse(); },
+    async addMusic(item) { music.push(item); },
     async references(projectId, characterId) { return references.filter(i => i.project_id === projectId && i.character_id === characterId); },
     async addReference(image) { references.push(image); },
     async standardReference(projectId, characterId, imageId) { const key = `${projectId}/${characterId}`; if (imageId) standards.set(key, imageId); return standards.get(key); },

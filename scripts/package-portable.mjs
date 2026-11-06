@@ -25,7 +25,15 @@ async function copyPackage(source, destination, parents = []) {
   if (parents.includes(key)) throw new Error(`Dependency cycle: ${key}`);
   await mkdir(dirname(destination), { recursive: true });
   await cp(source, destination, { recursive: true, dereference: true,
-    filter: path => path === source || !path.slice(source.length + 1).split(/[\\/]/).includes('node_modules') });
+    filter: path => {
+      if (path === source) return true;
+      const parts = path.slice(source.length + 1).split(/[\\/]/);
+      if (parts.some(part => ['node_modules', '.git', 'data', 'private', 'secrets', 'local-config'].includes(part))) return false;
+      if (parts.some(part => part.startsWith('.env') || part === '.npmrc' || /\.(?:sqlite|db)(?:-.*)?$|\.local\.(?:json|ya?ml)$|\.(?:pem|key|p12|pfx)$/i.test(part))) return false;
+      // Workspace packages ship compiled runtime files only.
+      if (metadata.name.startsWith('@gal/')) return parts[0] === 'dist' || parts[0] === 'package.json';
+      return true;
+    } });
   const require = createRequire(join(source, 'package.json'));
   for (const name of Object.keys(metadata.dependencies ?? {})) {
     let found;
@@ -48,6 +56,9 @@ catch (error) {
 await copyPackage(join(root, 'apps/api'), join(output, 'app/apps/api'));
 await cp(join(root, 'apps/web/dist'), join(output, 'app/apps/web/dist'), { recursive: true });
 await copyFile(join(root, 'scripts/start-portable.cmd'), join(output, '启动.cmd'));
+await copyFile(join(root, '.env.example'), join(output, '.env.example'));
+await copyFile(join(root, '实现与验收.md'), join(output, '实现与验收.md'));
+await copyFile(join(root, 'scripts/backup.mjs'), join(output, 'backup.mjs'));
 await writeFile(join(output, '使用说明.txt'), '双击 启动.cmd，打开 http://127.0.0.1:3001\r\n按 Ctrl+C 退出后，备份整个 data 目录。请先解压再运行。\r\n当前仅支持本机单人使用。\r\n');
 await writeFile(join(output, 'build-info.json'), JSON.stringify({ node: process.version, arch: process.arch, builtAt: new Date().toISOString() }, null, 2));
 console.log(`Portable package: ${output}`);

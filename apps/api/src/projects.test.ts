@@ -12,6 +12,7 @@ it("keeps projects after reopening the database", async () => {
   try {
     await repository.migrate();
     await repository.create(project);
+    await repository.addMusic({ id: "music-1", project_id: project.id, name: "主题曲", purpose: "bgm", source: "本人创作", mime: "audio/wav", data: "dGVzdA==", created_at: project.created_at });
     await repository.saveCharacter({ id: "char-1", project_id: project.id, name: "小夏", description: "安静的主角", updated_at: project.created_at });
     await repository.addReference({ id: "image-1", project_id: project.id, character_id: "char-1", name: "参考图", data_url: "sample", source: "本人创作", created_at: project.created_at });
     await repository.standardReference(project.id, "char-1", "image-1");
@@ -20,6 +21,8 @@ it("keeps projects after reopening the database", async () => {
     await repository.migrate();
     expect(await repository.get(project.id)).toEqual(project);
     expect(await repository.list()).toEqual([project]);
+    expect((await repository.music(project.id))[0]?.name).toBe("主题曲");
+    expect(await repository.music("other-project")).toEqual([]);
     expect(await repository.references(project.id, "char-1")).toHaveLength(1);
     expect(await repository.standardReference(project.id, "char-1")).toBe("image-1");
     expect(await repository.characters(project.id)).toHaveLength(1);
@@ -34,4 +37,15 @@ it("keeps projects after reopening the database", async () => {
     await repository.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+it("preserves independent scene kinds and their immutable history", async () => {
+  const repository = databaseProjects(":memory:");
+  try {
+    await repository.migrate(); await repository.create({ id: "p", name: "p", created_at: "now" });
+    await repository.saveCharacter({ id: "scene", project_id: "p", kind: "scene", name: "Room", description: "Day", updated_at: "now" });
+    await repository.saveCharacter({ id: "scene", project_id: "p", kind: "scene", name: "Room", description: "Night", updated_at: "later" });
+    expect((await repository.characters("p"))[0]?.kind).toBe("scene");
+    expect((await repository.history("p", "scene")).map(item => [item.kind, item.description])).toEqual([["scene", "Night"], ["scene", "Day"]]);
+    await repository.migrate(); expect(await repository.history("p", "scene")).toHaveLength(2);
+  } finally { await repository.close(); }
 });
