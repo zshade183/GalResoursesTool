@@ -1,5 +1,5 @@
 import { useState } from "react";
-import shinoPortrait from "./assets/shino-anime.png";
+import shinoPortrait from "./assets/shino-pink.png";
 
 const lines = [
   "今天，要让谁的故事开始呢？",
@@ -12,8 +12,8 @@ export function StudioCompanion() {
   const [line, setLine] = useState(0);
   const [paused, setPaused] = useState(false);
   return <section className={`studio-companion${paused ? " is-paused" : ""}`} aria-label="创作助手 星乃">
-    <div className="companion-art companion-anime">
-      <img className="companion-portrait" src={shinoPortrait} alt="星乃，银紫色长发、星形发饰，穿学院制服，手捧故事书的日漫风创作助手" />
+    <div className="companion-art">
+      <img className="companion-portrait" src={shinoPortrait} alt="粉发金瞳、穿粉白水手服的星乃" />
       <span className="companion-orbit" aria-hidden="true">✧</span>
     </div>
     <div className="companion-dialogue">

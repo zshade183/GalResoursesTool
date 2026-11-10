@@ -7,7 +7,7 @@ import { z } from "zod";
 import { zipFiles } from "./zip.js";
 type Params = { project: string; kind: string };
 const schemas = {
-  styles: z.object({ name: z.string().trim().min(1).max(120), rules: z.string().max(10000), width: z.number().int().min(64).max(8192), height: z.number().int().min(64).max(8192) }).strict(),
+  styles: z.object({ name: z.string().trim().min(1).max(120), rules: z.string().max(10000), width: z.number().int().min(64).max(8192), height: z.number().int().min(64).max(8192), reference_id: z.string().uuid().optional() }).strict(),
   requirements: z.object({ name: z.string().trim().min(1).max(200), type: z.enum(["character", "scene", "image", "video", "bgm", "sfx", "ui"]), description: z.string().max(10000), source: z.string().max(10000), status: z.enum(["draft", "confirmed", "done"]) }).strict(),
   bookmarks: z.object({ name: z.string().trim().min(1).max(200), url: z.url().max(2000).refine(s => /^https?:\/\//.test(s)), author: z.string().max(200), license: z.string().max(2000), commercial: z.enum(["unknown", "yes", "no"]), modification: z.enum(["unknown", "yes", "no"]), redistribution: z.enum(["unknown", "yes", "no"]), ai_processing: z.enum(["unknown", "yes", "no"]), evidence: z.string().max(5000) }).strict(),
   licenses: z.object({ asset_id: z.string().min(1).max(200), name: z.string().max(200), source: z.string().max(2000), author: z.string().max(200), redistribution: z.enum(["unknown", "yes", "no"]), evidence: z.string().max(5000) }).strict(),
@@ -20,6 +20,13 @@ export function studioRoutes(app: FastifyInstance, repository: ProjectRepository
   const records = (project: string, kind: string) => db.prepare("SELECT payload FROM studio_records WHERE project=? AND kind=? ORDER BY rowid DESC").all(project, kind).map(row => JSON.parse(String(row.payload)));
   app.decorate("assetLicense", (project: string, asset: string) => records(project, "licenses").find(record => record.asset_id === asset));
   const put = (project: string, kind: string, data: object) => { const item = { ...data, id: randomUUID(), created_at: new Date().toISOString() }; db.prepare("INSERT INTO studio_records VALUES(?,?,?,?)").run(item.id, project, kind, JSON.stringify(item)); return item; };
+  async function findReference(project: string, imageId: string) {
+    for (const character of await repository.characters(project)) {
+      const ref = (await repository.references(project, character.id)).find(image => image.id === imageId);
+      if (ref) return ref;
+    }
+    return undefined;
+  }
   const base = "/v1/projects/:project/studio";
   app.get<{ Params: Params }>(base + "/usage", async (request, reply) => {
     if (!await repository.get(request.params.project)) return reply.code(404).send({ message: "作品不存在" });
@@ -43,6 +50,13 @@ export function studioRoutes(app: FastifyInstance, repository: ProjectRepository
     if (!Object.hasOwn(schemas, request.params.kind)) return reply.code(400).send({ message: "记录类型无效" });
     const result = schemas[request.params.kind as keyof typeof schemas].safeParse(request.body);
     if (!result.success) return reply.code(400).send({ message: "记录字段无效，请检查填写内容" });
+    if (request.params.kind === "styles") {
+      const style = result.data as { reference_id?: string };
+      if (style.reference_id) {
+        const anchor = await findReference(request.params.project, style.reference_id);
+        if (!anchor) return reply.code(400).send({ message: "风格锚点图不存在，请重新选择" });
+      }
+    }
     return reply.code(201).send(put(request.params.project, request.params.kind, result.data));
   });
   async function assets(project: string) {
@@ -53,7 +67,9 @@ export function studioRoutes(app: FastifyInstance, repository: ProjectRepository
     }
     for (const music of await repository.music(project)) items.push({ id: music.id, name: music.name, type: "audio", source: music.source, approved: true, extension: music.mime === "audio/wav" ? "wav" : music.mime === "audio/ogg" ? "ogg" : "mp3", bytes: Buffer.from(music.data, "base64"), parent_id: music.parent_id, loop_start: music.loop_start, loop_end: music.loop_end, loop_verified: music.loop_verified });
     if (db.prepare("SELECT name FROM sqlite_master WHERE name='video_jobs'").get()) for (const row of db.prepare("SELECT j.payload,f.bytes FROM video_jobs j JOIN video_files f ON j.id=f.id WHERE j.project=?").all(project)) {
-      const job = JSON.parse(String(row.payload)); items.push({ id: job.id, name: job.input.prompt, type: "videos", source: `Runway / ${job.provider_id ?? job.parent_id}`, approved: job.approved, extension: "mp4", bytes: Buffer.from(row.bytes as Uint8Array), parent_id: job.parent_id });
+      const job = JSON.parse(String(row.payload));
+      if (job.deleted_at && !job.approved) continue;
+      items.push({ id: job.id, name: job.input.prompt, type: "videos", source: `${job.input.provider === "seedance" ? "火山方舟 Seedance" : "Runway"} / ${job.provider_id ?? job.parent_id}`, approved: job.approved, extension: "mp4", bytes: Buffer.from(row.bytes as Uint8Array), parent_id: job.parent_id });
     }
     return items;
   }

@@ -17,6 +17,13 @@ it("audio generation persists candidates and approval is idempotent", async () =
     for (let i = 0; i < 2; i++) expect((await app.inject({ method: "POST", url: `/v1/projects/p/audio-jobs/${payload.request_id}/approve` })).statusCode).toBe(200);
     expect(await repo.music("p")).toHaveLength(1);
     expect((await app.inject({ method: "GET", url: `/v1/projects/other/audio-jobs/${payload.request_id}/file` })).statusCode).toBe(404);
+    const record = `/v1/projects/p/audio-jobs/${payload.request_id}`;
+    expect((await app.inject({ method: "DELETE", url: record })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/v1/projects/p/audio-jobs" })).json().items).toEqual([]);
+    expect((await app.inject({ method: "GET", url: "/v1/projects/p/audio-jobs?trash=1" })).json().items[0].id).toBe(payload.request_id);
+    expect(await repo.music("p")).toHaveLength(1);
+    expect((await app.inject({ method: "POST", url: record + "/restore" })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/v1/projects/p/audio-jobs" })).json().items[0].approved).toBe(true);
   } finally { await app.close(); }
 });
 it("conversation uses only explicit branch facts and never includes full character secrets", async () => {

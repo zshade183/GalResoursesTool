@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { ExpressionMask } from "./ExpressionMask";
 import { GenerationPanel } from "./GenerationPanel";
 type Image = { id: string; name: string; data_url: string; source: string };
-export function References({ projectId, characterId }: { projectId: string; characterId: string }) {
+export function References({ projectId, characterId, initialPanel = "library", initialPrompt }: {
+  projectId: string; characterId: string; initialPanel?: "library" | "generate"; initialPrompt?: string;
+}) {
   const refreshRevision = useRefreshRevision();
   const [images, setImages] = useState<Image[]>([]);
   const [standard, setStandard] = useState<string>();
@@ -11,7 +13,7 @@ export function References({ projectId, characterId }: { projectId: string; char
   const [source, setSource] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [panel, setPanel] = useState<"library" | "generate" | "edit">("library");
+  const [panel, setPanel] = useState<"library" | "generate" | "edit">(initialPanel);
   const [incoming, setIncoming] = useState<File>();
   const [selection, setSelection] = useState<string[]>([]);
   const url = `${import.meta.env.VITE_API_BASE_URL ?? ""}/v1/projects/${projectId}/characters/${characterId}/references`;
@@ -21,13 +23,14 @@ export function References({ projectId, characterId }: { projectId: string; char
     return () => controller.abort();
   }, [url, refreshRevision]);
   const standardImage = images.find(image => image.id === standard);
-  return <section><h3>素材参考图</h3><p>导入后可选择一张标准参考图。支持 PNG、JPEG、WebP，每张不超过 5MB。</p>
-    <nav className="workspace-tabs" aria-label="图片操作">
-      <button aria-pressed={panel === "library"} onClick={() => setPanel("library")}>素材库 · {images.length}</button>
-      <button aria-pressed={panel === "generate"} onClick={() => setPanel("generate")}>AI 生成与候选</button>
-      <button aria-pressed={panel === "edit"} onClick={() => setPanel("edit")}>蒙版与合成</button>
+  return <section className="reference-workbench">
+    <nav className="workspace-tabs pipeline-nav" aria-label="图片操作">
+      <button aria-pressed={panel === "library"} onClick={() => setPanel("library")}><small>01</small>素材库 · {images.length}</button>
+      <button aria-pressed={panel === "generate"} onClick={() => setPanel("generate")}><small>02</small>生成与候选</button>
+      <button aria-pressed={panel === "edit"} onClick={() => setPanel("edit")}><small>03</small>蒙版与合成</button>
     </nav>
     <div hidden={panel !== "library"}>
+    <p>导入图片后可设为标准参考。支持 PNG、JPEG、WebP，每张不超过 5MB。</p>
     <details><summary>导出素材包</summary>
       <p>选择图片后导出 ZIP，包含原始图片和来源清单。</p>
       {images.map(image => <label key={image.id} style={{ display: "block" }}><input type="checkbox" checked={selection.includes(image.id)} onChange={event => setSelection(previous => event.target.checked ? [...previous, image.id] : previous.filter(id => id !== image.id))} />{image.name}</label>)}
@@ -45,7 +48,7 @@ export function References({ projectId, characterId }: { projectId: string; char
     </details>
     </div>
     <div hidden={panel !== "generate"}>
-    <GenerationPanel projectId={projectId} characterId={characterId} referenceId={standard} onEdit={async (data, name) => {
+    <GenerationPanel projectId={projectId} characterId={characterId} referenceId={standard} referenceImages={images} initialPrompt={initialPrompt} onEdit={async (data, name) => {
       const blob = await (await fetch(data)).blob();
       setIncoming(new File([blob], name, { type: blob.type }));
       setPanel("edit");

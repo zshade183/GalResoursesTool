@@ -1,10 +1,11 @@
+import { jobRecordRoutes, matchesJobRecord, type JobRecordQuery } from "./job-records.js";
 import { ensureUsage, reserveUsage, updateUsage } from "./usage.js";
 import type { FastifyInstance } from "fastify";
 import type { ProjectRepository } from "./projects.js";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 const schema = z.object({ request_id: z.string().uuid(), name: z.string().trim().min(1).max(200), purpose: z.enum(["bgm", "sfx", "ambience"]), prompt: z.string().trim().min(1).max(4100), duration: z.number().min(0.5).max(300), instrumental: z.boolean(), loop: z.boolean() }).strict().refine(i => i.purpose === "bgm" ? i.duration >= 3 : i.duration <= 30);
-type Job = { id: string; project: string; input: z.infer<typeof schema>; state: string; created_at: string; error?: string; approved?: boolean; data?: string };
+type Job = { id: string; project: string; input: z.infer<typeof schema>; state: string; deleted_at?: string; created_at: string; error?: string; approved?: boolean; data?: string };
 type Params = { project: string; id: string };
 export function audioGenerationRoutes(app: FastifyInstance, repository: ProjectRepository, filename: string) {
   const db = new DatabaseSync(filename); db.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS audio_jobs(id TEXT PRIMARY KEY,payload TEXT NOT NULL)");
@@ -16,15 +17,16 @@ export function audioGenerationRoutes(app: FastifyInstance, repository: ProjectR
   app.addHook("onClose", async () => { await Promise.allSettled(active); db.close(); });
   const base = "/v1/projects/:project/audio-jobs";
   app.get("/v1/audio-services", async () => ({ elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY) }));
-  app.get<{ Params: Params }>(base, async (request, reply) => {
+  jobRecordRoutes(app, base, jobs, save, job => approving.has(job.id));
+  app.get<{ Params: Params; Querystring: JobRecordQuery }>(base, async (request, reply) => {
     if (!await repository.get(request.params.project)) return reply.code(404).send({ message: "作品不存在" });
-    return { items: [...jobs.values()].filter(job => job.project === request.params.project).reverse().map(view) };
+    return { items: [...jobs.values()].filter(job => matchesJobRecord(job, request.params.project, request.query)).reverse().map(view) };
   });
   app.post<{ Params: Params }>(base, async (request, reply) => {
     if (!await repository.get(request.params.project)) return reply.code(404).send({ message: "作品不存在" });
     const parsed = schema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ message: "音乐需 3 至 300 秒，音效需 0.5 至 30 秒，请检查输入" });
     const input = parsed.data, prior = jobs.get(input.request_id);
-    if (prior) return prior.project === request.params.project && JSON.stringify(prior.input) === JSON.stringify(input) ? view(prior) : reply.code(409).send({ message: "请求编号已使用" });
+    if (prior) return !prior.deleted_at && prior.project === request.params.project && JSON.stringify(prior.input) === JSON.stringify(input) ? view(prior) : reply.code(409).send({ message: "请求编号已使用" });
     if (!process.env.ELEVENLABS_API_KEY) return reply.code(400).send({ message: "缺少 ELEVENLABS_API_KEY" });
     if (active.size >= 2) return reply.code(429).send({ message: "已有两个音频任务运行" });
     try { reserveUsage(db, input.request_id, request.params.project, "audio", input.duration); }
@@ -43,7 +45,7 @@ export function audioGenerationRoutes(app: FastifyInstance, repository: ProjectR
   });
   app.get<{ Params: Params }>(base + "/:id/file", async (request, reply) => { const job = jobs.get(request.params.id); if (!job || job.project !== request.params.project || !job.data) return reply.code(404).send({ message: "音频不存在" }); return reply.type("audio/mpeg").send(Buffer.from(job.data, "base64")); });
   app.post<{ Params: Params }>(base + "/:id/approve", async (request, reply) => {
-    const job = jobs.get(request.params.id); if (!job || job.project !== request.params.project || !job.data) return reply.code(404).send({ message: "候选不存在" });
+    const job = jobs.get(request.params.id); if (!job || job.deleted_at || job.project !== request.params.project || !job.data) return reply.code(404).send({ message: "候选不存在" });
     if (approving.has(job.id)) return reply.code(409).send({ message: "正在保存" }); approving.add(job.id);
     try { if (!(await repository.music(job.project)).some(item => item.id === job.id)) await repository.addMusic({ id: job.id, project_id: job.project, name: job.input.name, purpose: job.input.purpose, source: `ElevenLabs / ${job.id}`, mime: "audio/mpeg", data: job.data, created_at: job.created_at }); job.approved = true; job.state = "approved"; save(job); return view(job); } finally { approving.delete(job.id); }
   });

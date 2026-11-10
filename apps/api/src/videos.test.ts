@@ -31,6 +31,7 @@ it("persists a video candidate, prevents duplicate submission and isolates proje
     expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/image_to_video"))).toHaveLength(1);
     expect((await app.inject({ method: "POST", url: "/v1/projects/p/videos", payload: { ...input, prompt: "different" } })).statusCode).toBe(409);
     const jobUrl = `/v1/projects/p/videos/${input.request_id}`;
+    expect((await app.inject({ method: "DELETE", url: jobUrl })).statusCode).toBe(409);
     expect((await app.inject({ method: "POST", url: jobUrl + "/approve", payload: { loop_verified: false } })).statusCode).toBe(409);
     await app.inject({ method: "POST", url: jobUrl + "/refresh", payload: {} });
     await vi.waitFor(async () => expect((await app.inject({ method: "GET", url: "/v1/projects/p/videos" })).json().items[0].state).toBe("awaiting_review"));
@@ -41,6 +42,12 @@ it("persists a video candidate, prevents duplicate submission and isolates proje
     expect((await app.inject({ method: "GET", url: jobUrl.replace("/p/", "/other/") + "/file" })).statusCode).toBe(404);
     expect((await app.inject({ method: "POST", url: jobUrl + "/process", payload: { start: 3, end: 2, mute: true } })).statusCode).toBe(400);
     expect((await app.inject({ method: "POST", url: jobUrl + "/process", payload: { start: 0, end: 5, mute: true } })).statusCode).toBe(503);
+    expect((await app.inject({ method: "DELETE", url: jobUrl })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/v1/projects/p/videos" })).json().items).toEqual([]);
+    expect((await app.inject({ method: "GET", url: "/v1/projects/p/videos?trash=1" })).json().items[0]).toMatchObject({ id: input.request_id, approved: true });
+    expect((await app.inject({ method: "GET", url: jobUrl + "/file" })).rawPayload).toEqual(bytes);
+    expect((await app.inject({ method: "POST", url: jobUrl + "/restore" })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/v1/projects/p/videos" })).json().items[0].state).toBe("approved");
   } finally { await app.close(); }
 });
 it("rejects missing credentials, unconfirmed references and unsupported video parameters", async () => {

@@ -1,6 +1,5 @@
 import { useRefreshRevision } from "./refresh";
 import { AudioEditor } from "./AudioEditor";
-import { AudioGeneration } from "./AudioGeneration";
 import { useEffect, useState } from "react";
 type Track = { id: string; name: string; purpose: string; source: string; mime: string; bytes: number };
 const purposes: Record<string, string> = { bgm: "背景音乐", ambience: "环境氛围", sfx: "音效" };
@@ -23,7 +22,6 @@ export function MusicWorkspace({ projectId }: { projectId: string }) {
   }
   useEffect(() => { void load(); }, [url, refreshRevision]);
   return <section><header className="workspace-header"><div><p className="eyebrow">SOUND LIBRARY</p><h2>给故事一点声音</h2><p>为场景挑选配乐，整理环境声与音效。</p></div><span className="status">本地音乐库</span></header>
-    <AudioGeneration projectId={projectId} onApproved={load} />
     <div className="generation-layout"><aside className="generation-controls"><h3>导入音频</h3>
       <form className="character-form" onSubmit={async event => {
         event.preventDefault(); if (!file || busy) return;
